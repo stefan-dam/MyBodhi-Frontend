@@ -10,7 +10,7 @@
     .u { align-self: flex-end; background: #e8f0ff; padding: 8px 12px; border-radius: 12px; }
     .b { align-self: flex-start; background: #eee; padding: 8px 12px; border-radius: 12px; }
     .quote { font-style: italic; opacity: .85; margin-top: 6px; }
-    .row { display:flex; gap:8px; }
+    .row { display:flex; gap:8px; align-items: center; }
     select, input { padding: 8px; }
     #tree { font-size: 28px; margin-left: auto; }
     .card { border:1px solid #ddd; padding:10px; border-radius:10px; background:#fafafa; }
@@ -24,11 +24,26 @@
     <h2>Login</h2>
     <input type="email" id="login-email" placeholder="Enter your email" />
     <button id="login-btn">Send Magic Link</button>
+    <p style="font-size:12px;opacity:.7;margin-top:8px">
+      Tip: add your site URL(s) to Supabase Auth &raquo; Redirect URLs (localhost + Netlify URL).
+    </p>
   </div>
 
   <!-- App Section (hidden until logged in) -->
   <div id="app-section" style="display:none;">
     <h1>MyBodhi</h1>
+
+    <!-- Voice controls -->
+    <div class="row" style="margin:8px 0;">
+      <label>
+        <input type="checkbox" id="voice-enabled" />
+        Voice
+      </label>
+      <button id="mic-btn" title="Hold to speak" style="padding:8px;">🎤 Hold</button>
+      <select id="voice-select" title="TTS voice"></select>
+    </div>
+
+    <!-- Mode + tree -->
     <div class="row" style="margin:8px 0;">
       <label>Mode:
         <select id="mode">
@@ -41,6 +56,7 @@
       <div id="tree">🌱</div>
     </div>
 
+    <!-- Tradition -->
     <label>Tradition:
       <select id="trad">
         <option value="buddhism">Buddhism (Bodhi)</option>
@@ -48,8 +64,10 @@
       </select>
     </label>
 
+    <!-- Chat thread -->
     <div id="chat"></div>
 
+    <!-- Input row -->
     <div class="row">
       <input id="msg" placeholder="Ask for guidance..." style="flex:1" />
       <button id="send">Send</button>
@@ -59,25 +77,27 @@
   </div>
 
   <script>
-    // --- Supabase setup ---
+    // ========== CONFIG ==========
+    // Supabase (replace with your project URL + anon key)
     const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
     const SUPABASE_ANON_KEY = "YOUR_PUBLIC_ANON_KEY";
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // Backend base URL (flip this to your Render URL on deploy)
+    const API_BASE_URL = 'http://127.0.0.1:8000'; // e.g., 'https://your-backend.onrender.com'
+
     let currentUserId = null;
 
-    // --- Login handling ---
+    // ========== AUTH (MAGIC LINK) ==========
     document.getElementById('login-btn').addEventListener('click', async () => {
-      const email = document.getElementById('login-email').value;
+      const email = document.getElementById('login-email').value.trim();
+      if (!email) return alert("Please enter your email.");
       const { error } = await supabaseClient.auth.signInWithOtp({ email });
-      if (error) {
-        alert("Error sending magic link: " + error.message);
-      } else {
-        alert("Magic link sent! Check your email.");
-      }
+      if (error) alert("Error sending magic link: " + error.message);
+      else alert("Magic link sent! Check your email.");
     });
 
-    async function checkSession() {
+    async function showAppIfSession() {
       const { data: { session } } = await supabaseClient.auth.getSession();
       if (session) {
         currentUserId = session.user.id;
@@ -96,7 +116,7 @@
       }
     });
 
-    // --- Existing App Logic ---
+    // ========== APP LOGIC ==========
     const chat = document.getElementById('chat');
     const msg = document.getElementById('msg');
     const send = document.getElementById('send');
@@ -117,13 +137,14 @@
     function bubble(text, cls) { bubbleHTML(text, cls); }
 
     async function refreshXP() {
-      const r = await fetch('http://127.0.0.1:8000/progress', {
+      if (!currentUserId) return;
+      const r = await fetch(`${API_BASE_URL}/progress`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: currentUserId })
       });
       const j = await r.json();
-      xp.textContent = `XP: ${j.xp}  •  Streak: ${j.streak}`;
+      xp.textContent = `XP: ${j.xp ?? 0}  •  Streak: ${j.streak ?? 0}`;
       tree.textContent = j.state === 'sprout' ? '🌱' : (j.state === 'branch' ? '🌿' : '🌳');
     }
 
@@ -131,30 +152,42 @@
       bubble(t, 'u');
       history.push({ user: t });
       const body = { user_id: currentUserId, tradition: trad.value, text: t, history };
-      const res = await fetch('http://127.0.0.1:8000/chat', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+      const res = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       const ans = data.answer || data.detail || '(error)';
-      bubbleHTML(ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''), 'b');
+      bubbleHTML(
+        ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''),
+        'b'
+      );
       history[history.length - 1].assistant = ans;
       await refreshXP();
     }
 
     async function startMeditation(kind) {
-      const res = await fetch('http://127.0.0.1:8000/meditation/start', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+      const res = await fetch(`${API_BASE_URL}/meditation/start`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ user_id: currentUserId, tradition: trad.value, kind })
       });
       const data = await res.json();
       const steps = data.steps || [];
-      bubbleHTML(`<div class="card"><b>Meditation • ${kind.replace('_',' ')}</b><ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol><button id="doneMed">Mark Complete</button></div>`, 'b');
+      bubbleHTML(
+        `<div class="card">
+           <b>Meditation • ${kind.replace('_',' ')}</b>
+           <ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol>
+           <button id="doneMed">Mark Complete</button>
+         </div>`, 'b'
+      );
       document.getElementById('doneMed').onclick = completeMeditation;
       await refreshXP();
     }
 
     async function completeMeditation() {
-      await fetch('http://127.0.0.1:8000/meditation/complete', { 
+      await fetch(`${API_BASE_URL}/meditation/complete`, { 
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ user_id: currentUserId })
@@ -164,8 +197,9 @@
     }
 
     async function nextLesson() {
-      const res = await fetch('http://127.0.0.1:8000/lesson/next', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+      const res = await fetch(`${API_BASE_URL}/lesson/next`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ user_id: currentUserId, tradition: trad.value })
       });
       const data = await res.json();
@@ -176,15 +210,18 @@
       }
       const L = data.lesson;
       bubbleHTML(
-        `<div class="card"><b>Lesson:</b> ${L.title}<br/>
-        <i>${L.objective}</i><br/>
-        ${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}
-        <div><b>Exercise:</b> ${L.exercise}</div>
-        <button id="completeLesson">Mark Lesson Done</button>
-        </div>`, 'b');
+        `<div class="card">
+           <b>Lesson:</b> ${L.title}<br/>
+           <i>${L.objective}</i><br/>
+           ${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}
+           <div><b>Exercise:</b> ${L.exercise}</div>
+           <button id="completeLesson">Mark Lesson Done</button>
+         </div>`, 'b'
+      );
       document.getElementById('completeLesson').onclick = async () => {
-        await fetch('http://127.0.0.1:8000/lesson/complete', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
+        await fetch(`${API_BASE_URL}/lesson/complete`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ user_id: currentUserId, tradition: trad.value, lesson_id: L.id })
         });
         bubble('Lesson marked complete. 🌟', 'b');
@@ -198,18 +235,114 @@
       if (!t && m === 'chat') return;
       msg.value = '';
 
-      if (m === 'chat')         return doChat(t);
-      if (m === 'med_breath')   return startMeditation('breath');
-      if (m === 'med_body')     return startMeditation('body_scan');
-      if (m === 'lesson')       return nextLesson();
+      if      (m === 'chat')       return doChat(t);
+      else if (m === 'med_breath') return startMeditation('breath');
+      else if (m === 'med_body')   return startMeditation('body_scan');
+      else if (m === 'lesson')     return nextLesson();
     }
 
     send.onclick = sendMsg;
     msg.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
 
-    // On load, check if user already logged in
-    checkSession();
+    // Show app if already logged in (after magic-link redirect)
+    showAppIfSession();
+
+    // ========== VOICE: TTS ==========
+    const voiceEnabled = document.getElementById('voice-enabled');
+    const voiceSelect = document.getElementById('voice-select');
+    let availableVoices = [];
+    let selectedVoice = null;
+
+    function loadVoices() {
+      availableVoices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+      voiceSelect.innerHTML = "";
+      availableVoices.forEach((v, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
+        voiceSelect.appendChild(opt);
+      });
+      const preferred = availableVoices.findIndex(v => /Siri|Premium|Enhanced|Natural/i.test(v.name));
+      voiceSelect.value = preferred >= 0 ? preferred : 0;
+      selectedVoice = availableVoices[voiceSelect.value] || null;
+    }
+    if ('speechSynthesis' in window) {
+      speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    }
+    voiceSelect.addEventListener('change', () => {
+      selectedVoice = availableVoices[voiceSelect.value] || null;
+    });
+
+    function speak(text) {
+      if (!voiceEnabled.checked || !('speechSynthesis' in window)) return;
+      if (!text || !text.trim()) return;
+      const utter = new SpeechSynthesisUtterance(text);
+      if (selectedVoice) utter.voice = selectedVoice;
+      utter.rate = 1.0;
+      utter.pitch = 1.0;
+      speechSynthesis.cancel();
+      speechSynthesis.speak(utter);
+    }
+
+    // ========== VOICE: STT (Push-to-talk) ==========
+    const micBtn = document.getElementById('mic-btn');
+    let recognizer = null;
+    let listening = false;
+
+    function sttSupported() {
+      return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    }
+    function createRecognizer() {
+      const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new Ctor();
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.maxAlternatives = 1;
+      return rec;
+    }
+
+    if (sttSupported()) {
+      recognizer = createRecognizer();
+      recognizer.onresult = (event) => {
+        let finalText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const chunk = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += chunk;
+          else msg.value = chunk; // show interim
+        }
+        if (finalText.trim()) {
+          msg.value = finalText.trim();
+          sendMsg(); // auto-send for low latency
+        }
+      };
+      recognizer.onerror = () => { listening = false; };
+      recognizer.onend = () => { listening = false; };
+
+      const startListening = () => { if (!listening) { try { recognizer.start(); listening = true; } catch {} } };
+      const stopListening  = () => { if (listening)   { try { recognizer.stop(); } catch {} } };
+
+      micBtn.addEventListener('mousedown', startListening);
+      micBtn.addEventListener('touchstart', startListening);
+      micBtn.addEventListener('mouseup', stopListening);
+      micBtn.addEventListener('mouseleave', stopListening);
+      micBtn.addEventListener('touchend', stopListening);
+    } else {
+      micBtn.disabled = true;
+      micBtn.title = "Speech recognition not supported in this browser";
+    }
+
+    // ========== TTS hook into assistant bubbles ==========
+    const __bubbleHTML = bubbleHTML;
+    bubbleHTML = function(html, cls) {
+      __bubbleHTML(html, cls);
+      if (cls === 'b') {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        speak(div.innerText.trim());
+      }
+    };
   </script>
 </body>
 </html>
-
