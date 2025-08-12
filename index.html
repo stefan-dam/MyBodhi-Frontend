@@ -5,277 +5,358 @@
   <title>MyBodhi</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#fff; --ink:#111; --muted:#666; --bubble:#eef2f7; --ububble:#e8f0ff; }
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 760px; margin: 20px auto; padding: 0 12px; color: var(--ink); }
-    h1 { font-size: 44px; margin: 0 0 16px; letter-spacing: .5px; }
-    .row { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
-    select, input, button { padding: 10px 12px; font-size: 16px; }
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 20px auto; padding: 0 12px; }
+    #chat { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; min-height: 160px; }
+    .u { align-self: flex-end; background: #e8f0ff; padding: 10px 12px; border-radius: 12px; max-width: 82%; }
+    .b { align-self: flex-start; background: #eee; padding: 10px 12px; border-radius: 12px; max-width: 82%; }
+    .sys { color:#666; font-size: 14px; text-align:center; }
+    .quote { font-style: italic; opacity: .9; margin-top: 6px; }
+    .row { display:flex; gap:10px; align-items: center; flex-wrap: wrap; }
+    select, input, button { padding: 10px; font-size: 16px; }
     select, input { border: 1px solid #ccc; border-radius: 12px; }
     button { border: 1px solid #bbb; background: #fafafa; border-radius: 14px; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
-    #chat { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 18px; min-height: 160px; }
-    .u { align-self: flex-end; background: var(--ububble); padding: 10px 12px; border-radius: 14px 14px 2px 14px; max-width: 82%; }
-    .b { align-self: flex-start; background: var(--bubble); padding: 10px 12px; border-radius: 14px 14px 14px 2px; max-width: 82%; }
-    .sys { color: var(--muted); font-size: 14px; text-align:center; }
-    .quote { font-style: italic; opacity: .9; margin-top: 6px; }
-    #composer { display:flex; gap:8px; align-items:center; }
-    #msg { flex:1; }
-    #micBtn { display:flex; gap:8px; align-items:center; }
-    .seed { font-size: 28px; margin-left:auto; }
+    #tree { font-size: 28px; margin-left: auto; }
+    .card { border:1px solid #ddd; padding:10px; border-radius:10px; background:#fafafa; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <h1>MyBodhi</h1>
 
-  <div class="row">
-    <button id="micBtn" title="Hold to speak">
-      🎤 Hold
-    </button>
-    <select id="voiceSel" aria-label="Voice">
-      <option>Alex (en-US) — default</option>
-    </select>
-    <span class="seed">🌱</span>
+  <!-- Login Section -->
+  <div id="login-section">
+    <h2>Login</h2>
+    <input type="email" id="login-email" placeholder="Enter your email" />
+    <button id="login-btn">Send Magic Link</button>
+    <p style="font-size:12px;opacity:.7;margin-top:8px">
+      Tip: In Supabase → Auth → URL Configuration, set Site URL to your deployed URL and add it to Redirect URLs.
+    </p>
   </div>
 
-  <div class="row">
-    <label>Mode:</label>
-    <select id="modeSel">
-      <option value="chat">Chat</option>
-      <option value="lesson" selected>Lesson</option>
-      <option value="meditation">Meditation</option>
-    </select>
+  <!-- App Section (hidden until logged in) -->
+  <div id="app-section" style="display:none;">
+    <h1>MyBodhi</h1>
 
-    <label>Tradition:</label>
-    <select id="tradSel">
-      <option value="buddhism">Buddhism (Bodhi)</option>
-      <option value="stoicism">Stoicism</option>
-      <option value="taoism">Taoism</option>
-    </select>
-  </div>
+    <!-- Voice row (checkbox removed) -->
+    <div class="row" style="margin:8px 0;">
+      <button id="mic-btn" title="Hold to speak">🎤 Hold</button>
+      <select id="voice-select" title="TTS voice"></select>
+      <div id="tree">🌱</div>
+    </div>
 
-  <div id="chat" aria-live="polite">
-    <div class="sys">Welcome. Type or hold the mic, then release to send.</div>
-  </div>
+    <!-- Mode + Tradition -->
+    <div class="row" style="margin:8px 0;">
+      <label>Mode:
+        <select id="mode">
+          <option value="chat" selected>Discussion</option>
+          <option value="med_breath">Meditation: Breath</option>
+          <option value="med_body">Meditation: Body Scan</option>
+          <option value="lesson">Lesson</option>
+        </select>
+      </label>
+      <label>Tradition:
+        <select id="trad">
+          <option value="buddhism">Buddhism (Bodhi)</option>
+          <option value="zen">Zen (Bonsai)</option>
+        </select>
+      </label>
+    </div>
 
-  <div id="composer">
-    <input id="msg" placeholder="Ask for guidance..." autocomplete="off" />
-    <button id="sendBtn">Send</button>
+    <!-- Chat thread -->
+    <div id="chat"><div class="sys">Welcome. Hold the mic to speak, or type and press Send.</div></div>
+
+    <!-- Input row -->
+    <div class="row">
+      <input id="msg" placeholder="Ask for guidance..." style="flex:1" />
+      <button id="send">Send</button>
+    </div>
+
+    <p id="xp"></p>
   </div>
 
   <script>
-    // ---------- CONFIG ----------
-    const API_BASE = "http://127.0.0.1:8000";
+    // ======= CONFIG =======
+    const SUPABASE_URL = "https://qqlyzqvszfyvrmyetekr.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbHl6cXZzemZ5dnJteWV0ZWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwMTAyMjQsImV4cCI6MjA3MDU4NjIyNH0.pXeijvS9Cny_Ba9LfJtCQYNXbyv5g6meKNhATKIZOFc";
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Endpoints used. Adjust here if your backend differs.
-    const ROUTES = {
-      chat:        `${API_BASE}/chat`,
-      lessonNext:  `${API_BASE}/lesson/next`,
-      meditationNext: `${API_BASE}/meditation/next`
-    };
+    // IMPORTANT: If your site is HTTPS and this is HTTP, browsers will block it.
+    const API_BASE_URL = 'http://127.0.0.1:8000'; // change to your HTTPS backend in prod
 
-    // ---------- UI ELEMENTS ----------
-    const chat      = document.getElementById('chat');
-    const msgInput  = document.getElementById('msg');
-    const sendBtn   = document.getElementById('sendBtn');
-    const modeSel   = document.getElementById('modeSel');
-    const tradSel   = document.getElementById('tradSel');
-    const micBtn    = document.getElementById('micBtn');
+    let currentUserId = null;
 
-    // ---------- CHAT HELPERS ----------
-    function addBubble(text, who='b') {
-      const div = document.createElement('div');
-      div.className = who;
-      div.textContent = text;
-      chat.appendChild(div);
+    // ======= AUTH (Magic Link) =======
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      const email = document.getElementById('login-email').value.trim();
+      if (!email) return alert("Please enter your email.");
+      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+      const { error } = await supabaseClient.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: redirectTo }
+      });
+      if (error) alert("Error sending magic link: " + error.message);
+      else alert("Magic link sent! Check your email.");
+    });
+
+    async function showAppIfSession() {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session) afterLogin(session);
+    }
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+      if (session) afterLogin(session);
+    });
+
+    function afterLogin(session) {
+      currentUserId = session.user.id;
+      document.getElementById('login-section').style.display = 'none';
+      document.getElementById('app-section').style.display = 'block';
+      if (window.location.hash.includes('access_token=')) {
+        history.replaceState(null, '', window.location.pathname);
+      }
+      refreshXP();
+    }
+
+    // ======= APP refs =======
+    const chat = document.getElementById('chat');
+    const msg = document.getElementById('msg');
+    const send = document.getElementById('send');
+    const trad = document.getElementById('trad');
+    const xp = document.getElementById('xp');
+    const mode = document.getElementById('mode');
+    const tree = document.getElementById('tree');
+
+    const historyArr = []; // {user, assistant}
+
+    function bubbleHTML(html, cls) {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.innerHTML = html;
+      chat.appendChild(d);
       chat.scrollTop = chat.scrollHeight;
-      return div;
+    }
+    function bubble(text, cls) { bubbleHTML(text, cls); }
+
+    function showFetchError(url, err, resText) {
+      const httpsMixed = (location.protocol === 'https:' && API_BASE_URL.startsWith('http:'));
+      let hint = httpsMixed
+        ? " Your page is HTTPS but the API is HTTP. Use an HTTPS API URL (or run both locally)."
+        : "";
+      bubble(`⚠️ Failed to fetch from ${url}. ${err?.message || err}. ${resText || ''}${hint}`, 'b');
+      console.error('Fetch error', url, err, resText);
     }
 
-    function addError(err) {
-      const m = typeof err === 'string' ? err : (err?.message || 'Unknown error');
-      addBubble('⚠️ ' + m, 'b');
-      console.error(err);
-    }
-
-    function setBusy(state) {
-      sendBtn.disabled = state;
-      micBtn.disabled  = state;
-      msgInput.disabled = state;
-    }
-
-    // Build request payloads consistently.
-    function buildPayload(mode, text) {
-      const tradition = tradSel.value;
-      // Normalize empty to null
-      const clean = (s) => (s && s.trim().length ? s.trim() : null);
-
-      if (mode === 'lesson') {
-        // If your backend needs only tradition, it will ignore text.
-        return { tradition, text: clean(text) };
-      }
-      if (mode === 'meditation') {
-        return { tradition, text: clean(text) };
-      }
-      // chat
-      return { text: clean(text), tradition };
-    }
-
-    async function sendMsg(source = 'typed') {
-      const mode = modeSel.value;
-      const text = msgInput.value;
-
-      if (!text?.trim() && (mode === 'chat')) {
-        msgInput.focus();
-        return;
-      }
-
-      // Show user's message (even if empty for lesson/meditation prompt)
-      if (text?.trim()) addBubble(text.trim(), 'u');
-
-      setBusy(true);
-
+    async function fetchJSON(url, bodyObj) {
       try {
-        let url;
-        if (mode === 'lesson') url = ROUTES.lessonNext;
-        else if (mode === 'meditation') url = ROUTES.meditationNext;
-        else url = ROUTES.chat;
-
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify(buildPayload(mode, text))
+          body: JSON.stringify(bodyObj)
         });
-
         if (!res.ok) {
-          const t = await res.text().catch(()=> '');
-          throw new Error(`HTTP ${res.status} from ${url}${t ? ` — ${t}` : ''}`);
+          const txt = await res.text().catch(()=> '');
+          throw new Error(`HTTP ${res.status} — ${txt}`);
         }
-
-        // Accept a few possible shapes from the backend.
-        const data = await res.json().catch(() => ({}));
-
-        let botText =
-          data.reply ?? data.text ?? data.message ?? data.content ??
-          (data.title && data.body ? `${data.title}\n\n${data.body}` : null);
-
-        // If the lesson endpoint returns a lesson object
-        if (!botText && data.lesson) {
-          const L = data.lesson;
-          botText = [
-            L.title ? `• ${L.title}` : null,
-            L.summary ?? null,
-            L.text ?? null
-          ].filter(Boolean).join('\n\n');
-        }
-
-        if (!botText) botText = '… (no content returned)';
-
-        addBubble(botText, 'b');
-      } catch (err) {
-        addError(err);
-      } finally {
-        // Only clear AFTER we’ve sent / rendered
-        msgInput.value = '';
-        setBusy(false);
-        msgInput.focus();
+        return await res.json();
+      } catch (e) {
+        showFetchError(url, e);
+        throw e;
       }
     }
 
-    sendBtn.addEventListener('click', sendMsg);
-    msgInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMsg();
-      }
+    async function refreshXP() {
+      if (!currentUserId) return;
+      try {
+        const j = await fetchJSON(`${API_BASE_URL}/progress`, { user_id: currentUserId });
+        xp.textContent = `XP: ${j.xp ?? 0}  •  Streak: ${j.streak ?? 0}`;
+        tree.textContent = j.state === 'sprout' ? '🌱' : (j.state === 'branch' ? '🌿' : '🌳');
+      } catch(_) {}
+    }
+
+    async function doChat(t) {
+      bubble(t, 'u');
+      historyArr.push({ user: t });
+      try {
+        const data = await fetchJSON(`${API_BASE_URL}/chat`, {
+          user_id: currentUserId, tradition: trad.value, text: t, history: historyArr
+        });
+        const ans = data.answer || data.detail || '(no content)';
+        bubbleHTML(
+          ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''),
+          'b'
+        );
+        historyArr[historyArr.length - 1].assistant = ans;
+        await refreshXP();
+      } catch(_) {}
+    }
+
+    async function startMeditation(kind) {
+      try {
+        const data = await fetchJSON(`${API_BASE_URL}/meditation/start`, {
+          user_id: currentUserId, tradition: trad.value, kind
+        });
+        const steps = data.steps || [];
+        bubbleHTML(
+          `<div class="card">
+             <b>Meditation • ${kind.replace('_',' ')}</b>
+             <ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol>
+             <button id="doneMed">Mark Complete</button>
+           </div>`, 'b'
+        );
+        document.getElementById('doneMed').onclick = completeMeditation;
+        await refreshXP();
+      } catch(_) {}
+    }
+
+    async function completeMeditation() {
+      try {
+        await fetchJSON(`${API_BASE_URL}/meditation/complete`, { user_id: currentUserId });
+        bubble('Meditation marked complete. 🌟', 'b');
+        await refreshXP();
+      } catch(_) {}
+    }
+
+    async function nextLesson() {
+      try {
+        const data = await fetchJSON(`${API_BASE_URL}/lesson/next`, {
+          user_id: currentUserId, tradition: trad.value
+        });
+        if (data.done) {
+          bubble('Level 1 complete for this tradition! 🎉', 'b');
+          await refreshXP();
+          return;
+        }
+        const L = data.lesson || {};
+        bubbleHTML(
+          `<div class="card">
+             <b>Lesson:</b> ${L.title || ''}<br/>
+             <i>${L.objective || ''}</i><br/>
+             ${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}
+             <div><b>Exercise:</b> ${L.exercise || ''}</div>
+             <button id="completeLesson">Mark Lesson Done</button>
+           </div>`, 'b'
+        );
+        const lessonId = L.id;
+        document.getElementById('completeLesson').onclick = async () => {
+          try {
+            await fetchJSON(`${API_BASE_URL}/lesson/complete`, {
+              user_id: currentUserId, tradition: trad.value, lesson_id: lessonId
+            });
+            bubble('Lesson marked complete. 🌟', 'b');
+            await refreshXP();
+          } catch(_) {}
+        };
+      } catch(_) {}
+    }
+
+    async function sendMsg() {
+      const t = msg.value.trim();
+      const m = mode.value;
+      if (!t && m === 'chat') return;
+      msg.value = '';
+      if      (m === 'chat')       return doChat(t);
+      else if (m === 'med_breath') return startMeditation('breath');
+      else if (m === 'med_body')   return startMeditation('body_scan');
+      else if (m === 'lesson')     return nextLesson();
+    }
+
+    send.onclick = sendMsg;
+    msg.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+
+    // ======= TTS (no checkbox; always speak) =======
+    const voiceSelect = document.getElementById('voice-select');
+    let availableVoices = [], selectedVoice = null;
+
+    function loadVoices() {
+      availableVoices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+      voiceSelect.innerHTML = "";
+      availableVoices.forEach((v, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
+        voiceSelect.appendChild(opt);
+      });
+      const preferred = availableVoices.findIndex(v => /Siri|Premium|Enhanced|Natural/i.test(v.name));
+      voiceSelect.value = preferred >= 0 ? preferred : 0;
+      selectedVoice = availableVoices[voiceSelect.value] || null;
+    }
+    if ('speechSynthesis' in window) {
+      speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    }
+    voiceSelect.addEventListener('change', () => {
+      selectedVoice = availableVoices[voiceSelect.value] || null;
     });
 
-    // ---------- HOLD‑TO‑TALK (Web Speech API) ----------
-    // We use webkitSpeechRecognition for widest support in Chrome.
-    let rec = null;
-    let holding = false;
-
-    function ensureRecognizer() {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return null;
-      const r = new SR();
-      r.lang = 'en-US';
-      r.continuous = false;
-      r.interimResults = true;
-      r.maxAlternatives = 1;
-      return r;
+    function speak(text) {
+      if (!('speechSynthesis' in window)) return;
+      if (!text || !text.trim()) return;
+      const utter = new SpeechSynthesisUtterance(text);
+      if (selectedVoice) utter.voice = selectedVoice;
+      utter.rate = 1.0; utter.pitch = 1.0;
+      speechSynthesis.cancel();
+      speechSynthesis.speak(utter);
     }
 
-    function startHold() {
-      if (holding) return;
-      holding = true;
-
-      rec = ensureRecognizer();
-      if (!rec) {
-        addError('Speech recognition not supported in this browser. Type instead.');
-        holding = false;
-        return;
+    // hook TTS to assistant bubbles
+    const __bubbleHTML = bubbleHTML;
+    bubbleHTML = function(html, cls) {
+      __bubbleHTML(html, cls);
+      if (cls === 'b') {
+        const tmp = document.createElement('div'); tmp.innerHTML = html;
+        speak(tmp.innerText.trim());
       }
+    };
 
-      micBtn.textContent = '🎙️ Listening… (hold)';
-      msgInput.placeholder = 'Listening…';
+    // ======= STT (hold-to-talk) =======
+    const micBtn = document.getElementById('mic-btn');
+    let recognizer = null, listening = false;
 
-      let interim = '';
-      let finalText = '';
+    function sttSupported() {
+      return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    }
+    function createRecognizer() {
+      const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new Ctor();
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.maxAlternatives = 1;
+      return rec;
+    }
 
-      rec.onresult = (evt) => {
-        interim = '';
-        for (let i = evt.resultIndex; i < evt.results.length; i++) {
-          const tx = evt.results[i][0].transcript;
-          if (evt.results[i].isFinal) finalText += tx;
-          else interim += tx;
+    if (sttSupported()) {
+      recognizer = createRecognizer();
+      recognizer.onresult = (event) => {
+        let finalText = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const chunk = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += chunk;
+          else interim += chunk;
         }
-        // Show live transcript; DO NOT clear it automatically
-        msgInput.value = (finalText + ' ' + interim).trim();
+        // keep interim visible; do NOT clear
+        msg.value = (finalText || interim).trim();
       };
-
-      rec.onerror = (e) => {
-        console.warn('rec error', e);
-        addError('Mic error: ' + (e.error || 'unknown'));
+      // Auto-send when user releases the button
+      const startListening = () => { if (!listening) { try { recognizer.start(); listening = true; micBtn.textContent = '🎙️ Listening…'; } catch {} } };
+      const stopListening  = () => {
+        if (listening) { try { recognizer.stop(); } catch {} }
+        listening = false; micBtn.textContent = '🎤 Hold';
+        const t = msg.value.trim();
+        if (t) sendMsg();
       };
-
-      rec.onend = () => {
-        // Do nothing here; we handle sending on stopHold().
-      };
-
-      try { rec.start(); } catch(e) {
-        // start() can throw if called twice fast
-        console.warn(e);
-      }
+      micBtn.addEventListener('mousedown', startListening);
+      micBtn.addEventListener('touchstart', startListening, { passive:false });
+      micBtn.addEventListener('mouseup', stopListening);
+      micBtn.addEventListener('mouseleave', () => { if (listening) stopListening(); });
+      micBtn.addEventListener('touchend', stopListening);
+    } else {
+      micBtn.disabled = true;
+      micBtn.title = "Speech recognition not supported in this browser";
     }
 
-    async function stopHold() {
-      if (!holding) return;
-      holding = false;
-
-      micBtn.textContent = '🎤 Hold';
-      msgInput.placeholder = 'Ask for guidance…';
-
-      try { rec && rec.stop(); } catch(e) { /* ignore */ }
-
-      // Auto-send whatever is in the box (if any)
-      const txt = msgInput.value?.trim();
-      if (txt?.length) {
-        await sendMsg('voice');
-      }
-    }
-
-    // Mouse + touch for hold-to-talk
-    micBtn.addEventListener('mousedown', startHold);
-    micBtn.addEventListener('mouseup', stopHold);
-    micBtn.addEventListener('mouseleave', () => { if (holding) stopHold(); });
-
-    micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startHold(); }, { passive:false });
-    micBtn.addEventListener('touchend',   (e) => { e.preventDefault(); stopHold(); },   { passive:false });
-
-    // ---------- BOOT ----------
-    // Optional: prime the server by hitting /lesson/next when in Lesson with empty input on first Send.
-    // Already handled: clicking Send in Lesson/Meditation with empty box sends a prompt to those endpoints.
+    // Boot: show app if already logged in
+    showAppIfSession();
   </script>
 </body>
 </html>
