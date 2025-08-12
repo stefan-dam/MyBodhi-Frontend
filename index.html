@@ -1,0 +1,215 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>MyBodhi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 20px auto; padding: 0 12px; }
+    #chat { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+    .u { align-self: flex-end; background: #e8f0ff; padding: 8px 12px; border-radius: 12px; }
+    .b { align-self: flex-start; background: #eee; padding: 8px 12px; border-radius: 12px; }
+    .quote { font-style: italic; opacity: .85; margin-top: 6px; }
+    .row { display:flex; gap:8px; }
+    select, input { padding: 8px; }
+    #tree { font-size: 28px; margin-left: auto; }
+    .card { border:1px solid #ddd; padding:10px; border-radius:10px; background:#fafafa; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <!-- Login Section -->
+  <div id="login-section">
+    <h2>Login</h2>
+    <input type="email" id="login-email" placeholder="Enter your email" />
+    <button id="login-btn">Send Magic Link</button>
+  </div>
+
+  <!-- App Section (hidden until logged in) -->
+  <div id="app-section" style="display:none;">
+    <h1>MyBodhi</h1>
+    <div class="row" style="margin:8px 0;">
+      <label>Mode:
+        <select id="mode">
+          <option value="chat" selected>Discussion</option>
+          <option value="med_breath">Meditation: Breath</option>
+          <option value="med_body">Meditation: Body Scan</option>
+          <option value="lesson">Lesson</option>
+        </select>
+      </label>
+      <div id="tree">🌱</div>
+    </div>
+
+    <label>Tradition:
+      <select id="trad">
+        <option value="buddhism">Buddhism (Bodhi)</option>
+        <option value="zen">Zen (Bonsai)</option>
+      </select>
+    </label>
+
+    <div id="chat"></div>
+
+    <div class="row">
+      <input id="msg" placeholder="Ask for guidance..." style="flex:1" />
+      <button id="send">Send</button>
+    </div>
+
+    <p id="xp"></p>
+  </div>
+
+  <script>
+    // --- Supabase setup ---
+    const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR_PUBLIC_ANON_KEY";
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentUserId = null;
+
+    // --- Login handling ---
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      const email = document.getElementById('login-email').value;
+      const { error } = await supabaseClient.auth.signInWithOtp({ email });
+      if (error) {
+        alert("Error sending magic link: " + error.message);
+      } else {
+        alert("Magic link sent! Check your email.");
+      }
+    });
+
+    async function checkSession() {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session) {
+        currentUserId = session.user.id;
+        document.getElementById('login-section').style.display = 'none';
+        document.getElementById('app-section').style.display = 'block';
+        refreshXP();
+      }
+    }
+
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        currentUserId = session.user.id;
+        document.getElementById('login-section').style.display = 'none';
+        document.getElementById('app-section').style.display = 'block';
+        refreshXP();
+      }
+    });
+
+    // --- Existing App Logic ---
+    const chat = document.getElementById('chat');
+    const msg = document.getElementById('msg');
+    const send = document.getElementById('send');
+    const trad = document.getElementById('trad');
+    const xp = document.getElementById('xp');
+    const mode = document.getElementById('mode');
+    const tree = document.getElementById('tree');
+
+    const history = [];
+
+    function bubbleHTML(html, cls) {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.innerHTML = html;
+      chat.appendChild(d);
+      chat.scrollTop = chat.scrollHeight;
+    }
+    function bubble(text, cls) { bubbleHTML(text, cls); }
+
+    async function refreshXP() {
+      const r = await fetch('http://127.0.0.1:8000/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUserId })
+      });
+      const j = await r.json();
+      xp.textContent = `XP: ${j.xp}  •  Streak: ${j.streak}`;
+      tree.textContent = j.state === 'sprout' ? '🌱' : (j.state === 'branch' ? '🌿' : '🌳');
+    }
+
+    async function doChat(t) {
+      bubble(t, 'u');
+      history.push({ user: t });
+      const body = { user_id: currentUserId, tradition: trad.value, text: t, history };
+      const res = await fetch('http://127.0.0.1:8000/chat', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      const ans = data.answer || data.detail || '(error)';
+      bubbleHTML(ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''), 'b');
+      history[history.length - 1].assistant = ans;
+      await refreshXP();
+    }
+
+    async function startMeditation(kind) {
+      const res = await fetch('http://127.0.0.1:8000/meditation/start', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: currentUserId, tradition: trad.value, kind })
+      });
+      const data = await res.json();
+      const steps = data.steps || [];
+      bubbleHTML(`<div class="card"><b>Meditation • ${kind.replace('_',' ')}</b><ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol><button id="doneMed">Mark Complete</button></div>`, 'b');
+      document.getElementById('doneMed').onclick = completeMeditation;
+      await refreshXP();
+    }
+
+    async function completeMeditation() {
+      await fetch('http://127.0.0.1:8000/meditation/complete', { 
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: currentUserId })
+      });
+      bubble('Meditation marked complete. 🌟', 'b');
+      await refreshXP();
+    }
+
+    async function nextLesson() {
+      const res = await fetch('http://127.0.0.1:8000/lesson/next', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: currentUserId, tradition: trad.value })
+      });
+      const data = await res.json();
+      if (data.done) {
+        bubble('Level 1 complete for this tradition! 🎉', 'b');
+        await refreshXP();
+        return;
+      }
+      const L = data.lesson;
+      bubbleHTML(
+        `<div class="card"><b>Lesson:</b> ${L.title}<br/>
+        <i>${L.objective}</i><br/>
+        ${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}
+        <div><b>Exercise:</b> ${L.exercise}</div>
+        <button id="completeLesson">Mark Lesson Done</button>
+        </div>`, 'b');
+      document.getElementById('completeLesson').onclick = async () => {
+        await fetch('http://127.0.0.1:8000/lesson/complete', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ user_id: currentUserId, tradition: trad.value, lesson_id: L.id })
+        });
+        bubble('Lesson marked complete. 🌟', 'b');
+        await refreshXP();
+      };
+    }
+
+    async function sendMsg() {
+      const t = msg.value.trim();
+      const m = mode.value;
+      if (!t && m === 'chat') return;
+      msg.value = '';
+
+      if (m === 'chat')         return doChat(t);
+      if (m === 'med_breath')   return startMeditation('breath');
+      if (m === 'med_body')     return startMeditation('body_scan');
+      if (m === 'lesson')       return nextLesson();
+    }
+
+    send.onclick = sendMsg;
+    msg.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+
+    // On load, check if user already logged in
+    checkSession();
+  </script>
+</body>
+</html>
+
