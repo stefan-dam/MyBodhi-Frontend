@@ -25,7 +25,7 @@
     <input type="email" id="login-email" placeholder="Enter your email" />
     <button id="login-btn">Send Magic Link</button>
     <p style="font-size:12px;opacity:.7;margin-top:8px">
-      Tip: add your site URL(s) to Supabase Auth &raquo; Redirect URLs (localhost + Netlify URL).
+      Tip: In Supabase → Auth → URL Configuration, set Site URL to your Netlify URL and add it to Redirect URLs.
     </p>
   </div>
 
@@ -92,7 +92,15 @@
     document.getElementById('login-btn').addEventListener('click', async () => {
       const email = document.getElementById('login-email').value.trim();
       if (!email) return alert("Please enter your email.");
-      const { error } = await supabaseClient.auth.signInWithOtp({ email });
+
+      // Force magic link to return to the current page (Netlify or localhost)
+      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+
+      const { error } = await supabaseClient.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: redirectTo }
+      });
+
       if (error) alert("Error sending magic link: " + error.message);
       else alert("Magic link sent! Check your email.");
     });
@@ -103,6 +111,12 @@
         currentUserId = session.user.id;
         document.getElementById('login-section').style.display = 'none';
         document.getElementById('app-section').style.display = 'block';
+
+        // Clean the URL (remove #access_token=... after redirect)
+        if (window.location.hash.includes('access_token=')) {
+          history.replaceState(null, '', window.location.pathname);
+        }
+
         refreshXP();
       }
     }
@@ -112,6 +126,11 @@
         currentUserId = session.user.id;
         document.getElementById('login-section').style.display = 'none';
         document.getElementById('app-section').style.display = 'block';
+
+        if (window.location.hash.includes('access_token=')) {
+          history.replaceState(null, '', window.location.pathname);
+        }
+
         refreshXP();
       }
     });
