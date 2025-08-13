@@ -22,29 +22,20 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
-  <!-- Login Section -->
   <div id="login-section">
     <h2>Login</h2>
     <input type="email" id="login-email" placeholder="Enter your email" />
     <button id="login-btn">Send Magic Link</button>
-    <p style="font-size:12px;opacity:.7;margin-top:8px">
-      Tip: In Supabase → Auth → URL Configuration, set Site URL to your deployed URL and add it to Redirect URLs.
-    </p>
+    <p style="font-size:12px;opacity:.7;margin-top:8px">Tip: In Supabase → Auth → URL Configuration, set Site URL to your deployed URL and add it to Redirect URLs.</p>
   </div>
 
-  <!-- App Section (hidden until logged in) -->
   <div id="app-section" style="display:none;">
     <h1>MyBodhi</h1>
-
-    <!-- Voice row (checkbox removed) -->
     <div class="row" style="margin:8px 0;">
       <button id="mic-btn" title="Hold to speak">🎤 Hold</button>
       <select id="voice-select" title="TTS voice"></select>
       <div id="tree">🌱</div>
     </div>
-
-    <!-- Mode + Tradition -->
     <div class="row" style="margin:8px 0;">
       <label>Mode:
         <select id="mode">
@@ -61,124 +52,77 @@
         </select>
       </label>
     </div>
-
-    <!-- Chat thread -->
     <div id="chat"><div class="sys">Welcome. Hold the mic to speak, or type and press Send.</div></div>
-
-    <!-- Input row -->
     <div class="row">
       <input id="msg" placeholder="Ask for guidance..." style="flex:1" />
       <button id="send">Send</button>
     </div>
-
     <p id="xp"></p>
   </div>
 
   <script>
-    // ======= APP_URL / API_BASE (canonical app URL + backend URL) =======
     const APP_URL = window.location.origin;
     const isLocalPage = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
     const LOCAL_API = 'http://127.0.0.1:8000';
     const PROD_API  = 'https://mybodhi-backend.onrender.com';
-    const API_BASE  = isLocalPage ? LOCAL_API : PROD_API; // single source of truth
+    const API_BASE  = isLocalPage ? LOCAL_API : PROD_API;
     window.APP_CONFIG = { APP_URL, API_BASE };
 
-    // (auth redirect handler moved below, after Supabase client is initialized)
-
-    // ======= CONFIG: Supabase =======
     const SUPABASE_URL = "https://qqlyzqvszfyvrmyetekr.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbHl6cXZzemZ5dnJteWV0ZWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwMTAyMjQsImV4cCI6MjA3MDU4NjIyNH0.pXeijvS9Cny_Ba9LfJtCQYNXbyv5g6meKNhATKIZOFc";
-    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
 
-    // ======= Redirect / confirmation handler (Supabase code flow + hash tokens + optional GoTrue) =======
     async function handleAuthRedirect() {
       const url = new URL(window.location.href);
       const q = url.searchParams;
       const h = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-
-      // --- Supabase v2 PKCE / magic link: ?code=... (&type=signup|recovery|invite|magiclink)
       const code = q.get('code');
-      const supaType = q.get('type');
       if (code) {
-        try {
-          const { data, error } = await supabaseClient.auth.exchangeCodeForSession({ code });
-          if (error) console.error('exchangeCodeForSession error:', error);
-          else console.log('Supabase session established via code', supaType || '');
-        } catch (e) {
-          console.error('exchangeCodeForSession threw:', e);
-        }
+        try { await supabaseClient.auth.exchangeCodeForSession({ code }); } catch {}
         history.replaceState({}, '', window.location.pathname);
         return;
       }
-
-      // --- Supabase hash tokens style: #access_token=...&refresh_token=...
       const accessToken = h.get('access_token');
       if (accessToken) {
-        // supabase-js usually processes this automatically; just clean hash
         try {
           localStorage.setItem('sb-access-token', accessToken);
           const rt = h.get('refresh_token');
           if (rt) localStorage.setItem('sb-refresh-token', rt);
         } catch {}
         history.replaceState({}, '', window.location.pathname);
-        return;
-      }
-
-      // --- Optional: Netlify/GoTrue confirm (if ever used)
-      const confirmToken = q.get('confirmation_token');
-      const confirmType  = q.get('type');
-      if (confirmToken) {
-        fetch(`${window.APP_CONFIG.API_BASE}/auth/confirm?token=${encodeURIComponent(confirmToken)}&type=${encodeURIComponent(confirmType||'')}`, {
-          credentials: 'include'
-        }).catch(err => console.error('Confirm error', err))
-          .finally(() => history.replaceState({}, '', window.location.pathname));
       }
     }
 
-    // Run once on load before checking session
     handleAuthRedirect();
 
-    // Use the same API_BASE everywhere
     const API_BASE_URL = API_BASE;
-
     let currentUserId = null;
-    let booted = false; // prevents double afterLogin()
+    let booted = false;
 
-    // ======= AUTH (Magic Link) =======
     document.getElementById('login-btn').addEventListener('click', async () => {
       const email = document.getElementById('login-email').value.trim();
-      if (!email) return alert("Please enter your email.");
-      const redirectTo = `${window.APP_CONFIG.APP_URL}${window.location.pathname}`; // canonical
-      const { error } = await supabaseClient.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo }
-      });
-      if (error) alert("Error sending magic link: " + error.message);
-      else alert("Magic link sent! Check your email.");
+      if (!email) { alert("Please enter your email."); return; }
+      const redirectTo = `${window.APP_CONFIG.APP_URL}/`;
+      const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo, shouldCreateUser: true } });
+      if (error) alert("Error sending magic link: " + error.message); else alert("Magic link sent! Check your email.");
     });
 
     async function showAppIfSession() {
       const { data: { session } } = await supabaseClient.auth.getSession();
       if (session) afterLogin(session);
     }
-    supabaseClient.auth.onAuthStateChange((_event, session) => {
-      if (session) afterLogin(session);
-    });
+    supabaseClient.auth.onAuthStateChange((_event, session) => { if (session) afterLogin(session); });
 
     function afterLogin(session) {
-      if (booted) return;  // <= stop duplicate /progress calls
+      if (booted) return;
       booted = true;
-
       currentUserId = session.user.id;
       document.getElementById('login-section').style.display = 'none';
       document.getElementById('app-section').style.display = 'block';
-      if (window.location.hash.includes('access_token=')) {
-        history.replaceState(null, '', window.location.pathname);
-      }
+      if (window.location.hash.includes('access_token=')) { history.replaceState(null, '', window.location.pathname); }
       refreshXP();
     }
 
-    // ======= APP refs =======
     const chat = document.getElementById('chat');
     const msg = document.getElementById('msg');
     const send = document.getElementById('send');
@@ -187,7 +131,7 @@
     const mode = document.getElementById('mode');
     const tree = document.getElementById('tree');
 
-    const historyArr = []; // {user, assistant}
+    const historyArr = [];
 
     function bubbleHTML(html, cls) {
       const d = document.createElement('div');
@@ -200,24 +144,15 @@
 
     function showFetchError(url, err, resText) {
       const httpsMixed = (location.protocol === 'https:' && API_BASE_URL.startsWith('http:'));
-      let hint = httpsMixed
-        ? " Your page is HTTPS but the API is HTTP. Use an HTTPS API URL (or run both locally)."
-        : "";
+      let hint = httpsMixed ? " Your page is HTTPS but the API is HTTP. Use an HTTPS API URL (or run both locally)." : "";
       bubble(`⚠️ Failed to fetch from ${url}. ${err?.message || err}. ${resText || ''}${hint}`, 'b');
       console.error('Fetch error', url, err, resText);
     }
 
     async function fetchJSON(url, bodyObj) {
       try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify(bodyObj)
-        });
-        if (!res.ok) {
-          const txt = await res.text().catch(()=> '');
-          throw new Error(`HTTP ${res.status} — ${txt}`);
-        }
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(bodyObj) });
+        if (!res.ok) { const txt = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} — ${txt}`); }
         return await res.json();
       } catch (e) {
         showFetchError(url, e);
@@ -228,7 +163,7 @@
     function renderTree(state) {
       if (state === 'sprout') tree.textContent = '🌱';
       else if (state === 'branch') tree.textContent = '🌿';
-      else tree.textContent = '🌳'; // blossom or any future state
+      else tree.textContent = '🌳';
     }
 
     async function refreshXP() {
@@ -244,18 +179,9 @@
       bubble(t, 'u');
       historyArr.push({ user: t });
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/chat`, {
-          user_id: currentUserId,
-          session_id: currentUserId,     // <= helps Zen “Explain” path
-          tradition: trad.value,
-          text: t,
-          history: historyArr
-        });
+        const data = await fetchJSON(`${API_BASE_URL}/chat`, { user_id: currentUserId, session_id: currentUserId, tradition: trad.value, text: t, history: historyArr });
         const ans = data.answer || data.detail || '(no content)';
-        bubbleHTML(
-          ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''),
-          'b'
-        );
+        bubbleHTML(ans + (data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''), 'b');
         historyArr[historyArr.length - 1].assistant = ans;
         await refreshXP();
       } catch(_) {}
@@ -263,17 +189,9 @@
 
     async function startMeditation(kind) {
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/meditation/start`, {
-          user_id: currentUserId, tradition: trad.value, kind
-        });
+        const data = await fetchJSON(`${API_BASE_URL}/meditation/start`, { user_id: currentUserId, tradition: trad.value, kind });
         const steps = data.steps || [];
-        bubbleHTML(
-          `<div class="card">
-             <b>Meditation • ${kind.replace('_',' ')}</b>
-             <ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol>
-             <button id="doneMed">Mark Complete</button>
-           </div>`, 'b'
-        );
+        bubbleHTML(`<div class="card"><b>Meditation • ${kind.replace('_',' ')}</b><ol>${steps.map(s=>`<li>${s}</li>`).join('')}</ol><button id="doneMed">Mark Complete</button></div>`, 'b');
         document.getElementById('doneMed').onclick = completeMeditation;
         await refreshXP();
       } catch(_) {}
@@ -289,30 +207,14 @@
 
     async function nextLesson() {
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/lesson/next`, {
-          user_id: currentUserId, tradition: trad.value
-        });
-        if (data.done) {
-          bubble('Level 1 complete for this tradition! 🎉', 'b');
-          await refreshXP();
-          return;
-        }
+        const data = await fetchJSON(`${API_BASE_URL}/lesson/next`, { user_id: currentUserId, tradition: trad.value });
+        if (data.done) { bubble('Level 1 complete for this tradition! 🎉', 'b'); await refreshXP(); return; }
         const L = data.lesson || {};
-        bubbleHTML(
-          `<div class="card">
-             <b>Lesson:</b> ${L.title || ''}<br/>
-             <i>${L.objective || ''}</i><br/>
-             ${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}
-             <div><b>Exercise:</b> ${L.exercise || ''}</div>
-             <button id="completeLesson">Mark Lesson Done</button>
-           </div>`, 'b'
-        );
+        bubbleHTML(`<div class="card"><b>Lesson:</b> ${L.title || ''}<br/><i>${L.objective || ''}</i><br/>${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}<div><b>Exercise:</b> ${L.exercise || ''}</div><button id="completeLesson">Mark Lesson Done</button></div>`, 'b');
         const lessonId = L.id;
         document.getElementById('completeLesson').onclick = async () => {
           try {
-            await fetchJSON(`${API_BASE_URL}/lesson/complete`, {
-              user_id: currentUserId, tradition: trad.value, lesson_id: lessonId
-            });
+            await fetchJSON(`${API_BASE_URL}/lesson/complete`, { user_id: currentUserId, tradition: trad.value, lesson_id: lessonId });
             bubble('Lesson marked complete. 🌟', 'b');
             await refreshXP();
           } catch(_) {}
@@ -334,7 +236,6 @@
     send.onclick = sendMsg;
     msg.addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
 
-    // ======= TTS (no checkbox; always speak) =======
     const voiceSelect = document.getElementById('voice-select');
     let availableVoices = [], selectedVoice = null;
 
@@ -351,13 +252,8 @@
       voiceSelect.value = preferred >= 0 ? preferred : 0;
       selectedVoice = availableVoices[voiceSelect.value] || null;
     }
-    if ('speechSynthesis' in window) {
-      speechSynthesis.onvoiceschanged = loadVoices;
-      loadVoices();
-    }
-    voiceSelect.addEventListener('change', () => {
-      selectedVoice = availableVoices[voiceSelect.value] || null;
-    });
+    if ('speechSynthesis' in window) { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+    voiceSelect.addEventListener('change', () => { selectedVoice = availableVoices[voiceSelect.value] || null; });
 
     function speak(text) {
       if (!('speechSynthesis' in window)) return;
@@ -369,84 +265,34 @@
       speechSynthesis.speak(utter);
     }
 
-    // hook TTS to assistant bubbles
     const __bubbleHTML = bubbleHTML;
     bubbleHTML = function(html, cls) {
       __bubbleHTML(html, cls);
-      if (cls === 'b') {
-        const tmp = document.createElement('div'); tmp.innerHTML = html;
-        speak(tmp.innerText.trim());
-      }
+      if (cls === 'b') { const tmp = document.createElement('div'); tmp.innerHTML = html; speak(tmp.innerText.trim()); }
     };
 
-    // ======= STT (hold-to-talk) =======
     const micBtn = document.getElementById('mic-btn');
     let recognizer = null, listening = false;
-    // guard so late onresult can't rewrite the input after we've sent
     let micSending = false;
 
-    function sttSupported() {
-      return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-    }
-    function createRecognizer() {
-      const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const rec = new Ctor();
-      rec.continuous = false;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
-      rec.maxAlternatives = 1;
-      return rec;
-    }
+    function sttSupported() { return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window; }
+    function createRecognizer() { const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition; const rec = new Ctor(); rec.continuous = false; rec.interimResults = true; rec.lang = 'en-US'; rec.maxAlternatives = 1; return rec; }
 
     if (sttSupported()) {
       recognizer = createRecognizer();
-
       recognizer.onresult = (event) => {
-        if (micSending) return; // ignore late results while sending
+        if (micSending) return;
         let finalText = '';
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const chunk = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finalText += chunk;
-          else interim += chunk;
+          if (event.results[i].isFinal) finalText += chunk; else interim += chunk;
         }
         msg.value = (finalText || interim).trim();
       };
-
-      recognizer.onend = () => {
-        if (micSending) msg.value = '';   // make sure the box is clear
-        listening = false;
-        micBtn.textContent = '🎤 Hold';
-      };
-
-      const startListening = () => {
-        if (!listening) {
-          try {
-            micSending = false;     // new session
-            msg.value = '';         // clear any stale text
-            recognizer.start();
-            listening = true;
-            micBtn.textContent = '🎙️ Listening…';
-          } catch {}
-        }
-      };
-
-      const stopListening = () => {
-        if (listening) { try { recognizer.stop(); } catch {} }
-        const t = msg.value.trim();
-        micBtn.textContent = '🎤 Hold';
-        if (t) {
-          micSending = true;
-          Promise.resolve(sendMsg()).finally(() => {
-            micSending = false;
-            msg.value = '';         // re-clear after any trailing results
-          });
-        } else {
-          msg.value = '';
-        }
-        listening = false;
-      };
-
+      recognizer.onend = () => { if (micSending) msg.value = ''; listening = false; micBtn.textContent = '🎤 Hold'; };
+      const startListening = () => { if (!listening) { try { micSending = false; msg.value = ''; recognizer.start(); listening = true; micBtn.textContent = '🎙️ Listening…'; } catch {} } };
+      const stopListening = () => { if (listening) { try { recognizer.stop(); } catch {} } const t = msg.value.trim(); micBtn.textContent = '🎤 Hold'; if (t) { micSending = true; Promise.resolve(sendMsg()).finally(() => { micSending = false; msg.value = ''; }); } else { msg.value = ''; } listening = false; };
       micBtn.addEventListener('mousedown', startListening);
       micBtn.addEventListener('touchstart', startListening, { passive:false });
       micBtn.addEventListener('mouseup', stopListening);
@@ -457,8 +303,6 @@
       micBtn.title = "Speech recognition not supported in this browser";
     }
 
-
-    // Boot: show app if already logged in
     showAppIfSession();
   </script>
 </body>
