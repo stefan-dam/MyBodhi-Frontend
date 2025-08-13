@@ -327,6 +327,8 @@
     // ======= STT (hold-to-talk) =======
     const micBtn = document.getElementById('mic-btn');
     let recognizer = null, listening = false;
+    // guard so late onresult can't rewrite the input after we've sent
+    let micSending = false;
 
     function sttSupported() {
       return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
@@ -343,7 +345,9 @@
 
     if (sttSupported()) {
       recognizer = createRecognizer();
+
       recognizer.onresult = (event) => {
+        if (micSending) return; // ignore late results while sending
         let finalText = '';
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -353,14 +357,41 @@
         }
         msg.value = (finalText || interim).trim();
       };
-      // Auto-send when user releases the button
-      const startListening = () => { if (!listening) { try { recognizer.start(); listening = true; micBtn.textContent = '🎙️ Listening…'; } catch {} } };
-      const stopListening  = () => {
-        if (listening) { try { recognizer.stop(); } catch {} }
-        listening = false; micBtn.textContent = '🎤 Hold';
-        const t = msg.value.trim();
-        if (t) sendMsg();
+
+      recognizer.onend = () => {
+        if (micSending) msg.value = '';   // make sure the box is clear
+        listening = false;
+        micBtn.textContent = '🎤 Hold';
       };
+
+      const startListening = () => {
+        if (!listening) {
+          try {
+            micSending = false;     // new session
+            msg.value = '';         // clear any stale text
+            recognizer.start();
+            listening = true;
+            micBtn.textContent = '🎙️ Listening…';
+          } catch {}
+        }
+      };
+
+      const stopListening = () => {
+        if (listening) { try { recognizer.stop(); } catch {} }
+        const t = msg.value.trim();
+        micBtn.textContent = '🎤 Hold';
+        if (t) {
+          micSending = true;
+          Promise.resolve(sendMsg()).finally(() => {
+            micSending = false;
+            msg.value = '';         // re-clear after any trailing results
+          });
+        } else {
+          msg.value = '';
+        }
+        listening = false;
+      };
+
       micBtn.addEventListener('mousedown', startListening);
       micBtn.addEventListener('touchstart', startListening, { passive:false });
       micBtn.addEventListener('mouseup', stopListening);
@@ -370,6 +401,7 @@
       micBtn.disabled = true;
       micBtn.title = "Speech recognition not supported in this browser";
     }
+
 
     // Boot: show app if already logged in
     showAppIfSession();
