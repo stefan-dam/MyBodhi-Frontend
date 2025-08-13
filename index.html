@@ -70,34 +70,60 @@
 
     const SUPABASE_URL = "https://qqlyzqvszfyvrmyetekr.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbHl6cXZzemZ5dnJteWV0ZWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwMTAyMjQsImV4cCI6MjA3MDU4NjIyNH0.pXeijvS9Cny_Ba9LfJtCQYNXbyv5g6meKNhATKIZOFc";
-    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+
+    let currentUserId = null;
+    let booted = false;
+
+    const dbgEl = document.createElement('pre');
+    dbgEl.style.cssText = 'position:fixed;bottom:8px;right:8px;max-width:60vw;max-height:40vh;overflow:auto;background:#111;color:#0f0;padding:8px;border-radius:8px;font-size:12px;z-index:9999;display:none;';
+    document.body.appendChild(dbgEl);
+    let dbgOn = false;
+    function dbg() {
+      if (!dbgOn) return;
+      const u = new URL(location.href);
+      dbgEl.textContent = ['[DEBUG]', 'search: ' + u.search, 'hash:   ' + u.hash, 'booted: ' + booted, 'user:   ' + (currentUserId || '-')].join('\n');
+    }
+    window.addEventListener('keydown', (e)=>{ if(e.shiftKey && e.key.toLowerCase()==='d'){ dbgOn=!dbgOn; dbgEl.style.display=dbgOn?'block':'none'; dbg(); }});
 
     async function handleAuthRedirect() {
       const url = new URL(window.location.href);
       const q = url.searchParams;
       const h = new URLSearchParams(window.location.hash.replace(/^#/, ''));
       const code = q.get('code');
+      const supaType = q.get('type');
       if (code) {
-        try { await supabaseClient.auth.exchangeCodeForSession({ code }); } catch {}
+        try {
+          const { data, error } = await supabaseClient.auth.exchangeCodeForSession({ code });
+          if (!error) { await showAppIfSession(); }
+          if (error) console.error('exchangeCodeForSession error:', error);
+        } catch (e) {
+          console.error('exchangeCodeForSession threw:', e);
+        }
         history.replaceState({}, '', window.location.pathname);
+        dbg();
         return;
       }
       const accessToken = h.get('access_token');
       if (accessToken) {
-        try {
-          localStorage.setItem('sb-access-token', accessToken);
-          const rt = h.get('refresh_token');
-          if (rt) localStorage.setItem('sb-refresh-token', rt);
-        } catch {}
+        try { localStorage.setItem('sb-access-token', accessToken); const rt = h.get('refresh_token'); if (rt) localStorage.setItem('sb-refresh-token', rt); } catch {}
+        await showAppIfSession();
         history.replaceState({}, '', window.location.pathname);
+        dbg();
+        return;
+      }
+      const confirmToken = q.get('confirmation_token');
+      const confirmType  = q.get('type');
+      if (confirmToken) {
+        fetch(`${window.APP_CONFIG.API_BASE}/auth/confirm?token=${encodeURIComponent(confirmToken)}&type=${encodeURIComponent(confirmType||'')}`, { credentials: 'include' })
+          .catch(err => console.error('Confirm error', err))
+          .finally(() => { history.replaceState({}, '', window.location.pathname); dbg(); });
       }
     }
 
     handleAuthRedirect();
 
     const API_BASE_URL = API_BASE;
-    let currentUserId = null;
-    let booted = false;
 
     document.getElementById('login-btn').addEventListener('click', async () => {
       const email = document.getElementById('login-email').value.trim();
@@ -133,18 +159,12 @@
 
     const historyArr = [];
 
-    function bubbleHTML(html, cls) {
-      const d = document.createElement('div');
-      d.className = cls;
-      d.innerHTML = html;
-      chat.appendChild(d);
-      chat.scrollTop = chat.scrollHeight;
-    }
+    function bubbleHTML(html, cls) { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; }
     function bubble(text, cls) { bubbleHTML(text, cls); }
 
     function showFetchError(url, err, resText) {
       const httpsMixed = (location.protocol === 'https:' && API_BASE_URL.startsWith('http:'));
-      let hint = httpsMixed ? " Your page is HTTPS but the API is HTTP. Use an HTTPS API URL (or run both locally)." : "";
+      const hint = httpsMixed ? " Your page is HTTPS but the API is HTTP. Use an HTTPS API URL (or run both locally)." : "";
       bubble(`⚠️ Failed to fetch from ${url}. ${err?.message || err}. ${resText || ''}${hint}`, 'b');
       console.error('Fetch error', url, err, resText);
     }
@@ -154,17 +174,10 @@
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(bodyObj) });
         if (!res.ok) { const txt = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status} — ${txt}`); }
         return await res.json();
-      } catch (e) {
-        showFetchError(url, e);
-        throw e;
-      }
+      } catch (e) { showFetchError(url, e); throw e; }
     }
 
-    function renderTree(state) {
-      if (state === 'sprout') tree.textContent = '🌱';
-      else if (state === 'branch') tree.textContent = '🌿';
-      else tree.textContent = '🌳';
-    }
+    function renderTree(state) { if (state === 'sprout') tree.textContent = '🌱'; else if (state === 'branch') tree.textContent = '🌿'; else tree.textContent = '🌳'; }
 
     async function refreshXP() {
       if (!currentUserId) return;
@@ -198,11 +211,7 @@
     }
 
     async function completeMeditation() {
-      try {
-        await fetchJSON(`${API_BASE_URL}/meditation/complete`, { user_id: currentUserId });
-        bubble('Meditation marked complete. 🌟', 'b');
-        await refreshXP();
-      } catch(_) {}
+      try { await fetchJSON(`${API_BASE_URL}/meditation/complete`, { user_id: currentUserId }); bubble('Meditation marked complete. 🌟', 'b'); await refreshXP(); } catch(_) {}
     }
 
     async function nextLesson() {
@@ -213,11 +222,7 @@
         bubbleHTML(`<div class="card"><b>Lesson:</b> ${L.title || ''}<br/><i>${L.objective || ''}</i><br/>${data.quote ? `<div class="quote">“${data.quote}” — ${data.source||''}</div>` : ''}<div><b>Exercise:</b> ${L.exercise || ''}</div><button id="completeLesson">Mark Lesson Done</button></div>`, 'b');
         const lessonId = L.id;
         document.getElementById('completeLesson').onclick = async () => {
-          try {
-            await fetchJSON(`${API_BASE_URL}/lesson/complete`, { user_id: currentUserId, tradition: trad.value, lesson_id: lessonId });
-            bubble('Lesson marked complete. 🌟', 'b');
-            await refreshXP();
-          } catch(_) {}
+          try { await fetchJSON(`${API_BASE_URL}/lesson/complete`, { user_id: currentUserId, tradition: trad.value, lesson_id: lessonId }); bubble('Lesson marked complete. 🌟', 'b'); await refreshXP(); } catch(_) {}
         };
       } catch(_) {}
     }
@@ -227,10 +232,10 @@
       const m = mode.value;
       if (!t && m === 'chat') return;
       msg.value = '';
-      if      (m === 'chat')       return doChat(t);
+      if (m === 'chat') return doChat(t);
       else if (m === 'med_breath') return startMeditation('breath');
-      else if (m === 'med_body')   return startMeditation('body_scan');
-      else if (m === 'lesson')     return nextLesson();
+      else if (m === 'med_body') return startMeditation('body_scan');
+      else if (m === 'lesson') return nextLesson();
     }
 
     send.onclick = sendMsg;
@@ -242,12 +247,7 @@
     function loadVoices() {
       availableVoices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
       voiceSelect.innerHTML = "";
-      availableVoices.forEach((v, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
-        voiceSelect.appendChild(opt);
-      });
+      availableVoices.forEach((v, i) => { const opt = document.createElement('option'); opt.value = i; opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`; voiceSelect.appendChild(opt); });
       const preferred = availableVoices.findIndex(v => /Siri|Premium|Enhanced|Natural/i.test(v.name));
       voiceSelect.value = preferred >= 0 ? preferred : 0;
       selectedVoice = availableVoices[voiceSelect.value] || null;
@@ -255,21 +255,10 @@
     if ('speechSynthesis' in window) { speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
     voiceSelect.addEventListener('change', () => { selectedVoice = availableVoices[voiceSelect.value] || null; });
 
-    function speak(text) {
-      if (!('speechSynthesis' in window)) return;
-      if (!text || !text.trim()) return;
-      const utter = new SpeechSynthesisUtterance(text);
-      if (selectedVoice) utter.voice = selectedVoice;
-      utter.rate = 1.0; utter.pitch = 1.0;
-      speechSynthesis.cancel();
-      speechSynthesis.speak(utter);
-    }
+    function speak(text) { if (!('speechSynthesis' in window)) return; if (!text || !text.trim()) return; const utter = new SpeechSynthesisUtterance(text); if (selectedVoice) utter.voice = selectedVoice; utter.rate = 1.0; utter.pitch = 1.0; speechSynthesis.cancel(); speechSynthesis.speak(utter); }
 
     const __bubbleHTML = bubbleHTML;
-    bubbleHTML = function(html, cls) {
-      __bubbleHTML(html, cls);
-      if (cls === 'b') { const tmp = document.createElement('div'); tmp.innerHTML = html; speak(tmp.innerText.trim()); }
-    };
+    bubbleHTML = function(html, cls) { __bubbleHTML(html, cls); if (cls === 'b') { const tmp = document.createElement('div'); tmp.innerHTML = html; speak(tmp.innerText.trim()); } };
 
     const micBtn = document.getElementById('mic-btn');
     let recognizer = null, listening = false;
@@ -280,16 +269,7 @@
 
     if (sttSupported()) {
       recognizer = createRecognizer();
-      recognizer.onresult = (event) => {
-        if (micSending) return;
-        let finalText = '';
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const chunk = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finalText += chunk; else interim += chunk;
-        }
-        msg.value = (finalText || interim).trim();
-      };
+      recognizer.onresult = (event) => { if (micSending) return; let finalText = ''; let interim = ''; for (let i = event.resultIndex; i < event.results.length; i++) { const chunk = event.results[i][0].transcript; if (event.results[i].isFinal) finalText += chunk; else interim += chunk; } msg.value = (finalText || interim).trim(); };
       recognizer.onend = () => { if (micSending) msg.value = ''; listening = false; micBtn.textContent = '🎤 Hold'; };
       const startListening = () => { if (!listening) { try { micSending = false; msg.value = ''; recognizer.start(); listening = true; micBtn.textContent = '🎙️ Listening…'; } catch {} } };
       const stopListening = () => { if (listening) { try { recognizer.stop(); } catch {} } const t = msg.value.trim(); micBtn.textContent = '🎤 Hold'; if (t) { micSending = true; Promise.resolve(sendMsg()).finally(() => { micSending = false; msg.value = ''; }); } else { msg.value = ''; } listening = false; };
@@ -298,10 +278,7 @@
       micBtn.addEventListener('mouseup', stopListening);
       micBtn.addEventListener('mouseleave', () => { if (listening) stopListening(); });
       micBtn.addEventListener('touchend', stopListening);
-    } else {
-      micBtn.disabled = true;
-      micBtn.title = "Speech recognition not supported in this browser";
-    }
+    } else { micBtn.disabled = true; micBtn.title = "Speech recognition not supported in this browser"; }
 
     showAppIfSession();
   </script>
